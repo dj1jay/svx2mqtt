@@ -14,7 +14,6 @@ import os
 import re
 import time
 import json
-import sys
 import paho.mqtt.client as mqtt
 from paho.mqtt.client import CallbackAPIVersion
 
@@ -30,43 +29,46 @@ MQTT_TOPIC     = "svxlink/talker"
 MQTT_CLIENT_ID = "svxlog2mqtt"
 MQTT_USERNAME  = None
 MQTT_PASSWORD  = None
-MQTT_RETAIN    = False                # retained für Status, wenn gewünscht
-MQTT_QOS       = 0                    # QoS: 0, 1 oder 2
-POLL_INTERVAL  = 0.3                  # Sekunden zwischen Datei-Checks
+MQTT_RETAIN    = False
+MQTT_QOS       = 0
+POLL_INTERVAL  = 0.3
 
 # Welche Quellen parsen?
 ENABLE_REFLECTOR = True
 ENABLE_TX        = True
 ENABLE_RX        = True
 
-# Suchkriterien / Tags im Log (an dein Setup anpassen)
+# Suchkriterien / Tags im Log
 REFLECTOR_TAG = "ReflectorLogic"
 TX_TAG        = "Tx1"
 RX_TAG        = "Rx1"
 # ===========================================================
 
-# Regex-Baustein für Datum/Zeit am Zeilenanfang
 DT_RE = r"^(?P<date>\d{2}\.\d{2}\.\d{4}) (?P<time>\d{2}:\d{2}:\d{2}): "
 
-# 1) TG-Auswahl
+# TG-Auswahl
 SELECT_RE = re.compile(
-    DT_RE + re.escape(REFLECTOR_TAG) + r": Selecting TG #(?P<tg>\d+)\s*$"
+    DT_RE + re.escape(REFLECTOR_TAG) + r": Selecting TG #(?P<tg>\d+)\s*$",
+    re.IGNORECASE
 ) if ENABLE_REFLECTOR else None
 
-# 2) Talker start/stop (nur relevant, wenn TG ausgewählt)
+# Talker start/stop
 REFLECTOR_RE = re.compile(
     DT_RE + re.escape(REFLECTOR_TAG) +
-    r": Talker (?P<state>start|stop) on TG #(?P<tg>\d+): (?P<call>[A-Z0-9\-]+)\s*$"
+    r": Talker (?P<state>start|stop) on TG #(?P<tg>\d+): (?P<call>[A-Za-z0-9\/\-]+)\s*$",
+    re.IGNORECASE
 ) if ENABLE_REFLECTOR else None
 
-# 3) Transmitter
+# Transmitter
 TX_RE = re.compile(
-    DT_RE + re.escape(TX_TAG) + r": Turning the transmitter (?P<on>ON|OFF)\s*$"
+    DT_RE + re.escape(TX_TAG) + r": Turning the transmitter (?P<on>ON|OFF)\s*$",
+    re.IGNORECASE
 ) if ENABLE_TX else None
 
-# 4) Receiver
+# Receiver
 RX_RE = re.compile(
-    DT_RE + re.escape(RX_TAG) + r": The squelch is (?P<open>OPEN|CLOSED)\s*$"
+    DT_RE + re.escape(RX_TAG) + r": The squelch is (?P<open>OPEN|CLOSED)\s*$",
+    re.IGNORECASE
 ) if ENABLE_RX else None
 
 
@@ -79,29 +81,28 @@ def _qos(q):
 
 
 def make_client():
-    client = mqtt.Client(
+    c = mqtt.Client(
         callback_api_version=CallbackAPIVersion.VERSION2,
         client_id=MQTT_CLIENT_ID,
         protocol=mqtt.MQTTv311
     )
     if MQTT_USERNAME:
-        client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD or None)
+        c.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD or None)
 
-    def on_connect(c, userdata, flags, rc, properties=None):
+    def on_connect(cli, userdata, flags, rc, props=None):
         print(f"[MQTT] Verbunden rc={rc}")
 
-    def on_disconnect(c, userdata, rc, properties=None):
+    def on_disconnect(cli, userdata, rc, props=None):
         print(f"[MQTT] Getrennt rc={rc}")
 
-    client.on_connect = on_connect
-    client.on_disconnect = on_disconnect
-    client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
-    client.loop_start()
-    return client
+    c.on_connect = on_connect
+    c.on_disconnect = on_disconnect
+    c.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+    c.loop_start()
+    return c
 
 
 def tail_follow(path):
-    """Einfaches tail -F mit Rotationserkennung."""
     inode = None
     f = None
     pos = 0
@@ -119,13 +120,11 @@ def tail_follow(path):
         try:
             if f is None:
                 open_file()
-
             line = f.readline()
             if line:
                 pos = f.tell()
                 yield line.rstrip("\n")
                 continue
-
             time.sleep(POLL_INTERVAL)
             st = os.stat(path)
             if st.st_ino != inode or st.st_size < pos:
@@ -147,17 +146,14 @@ def publish_status(client, topic, status):
 def main():
     client = make_client()
 
-    # Default-Zustand
     state = {
         "time": "",
         "talker": "0",
-        "TG": "TG0",
+        "TG": "N0TG",
         "Call": "N0Call",
         "tx": "0",
         "rx": "0",
     }
-
-    # Aktuell verfolgte TG (None = frei)
     selected_tg = None
 
     print(f"Starte: Folge {LOGFILE_PATH} -> MQTT {MQTT_BROKER}:{MQTT_PORT} Topic {MQTT_TOPIC} QoS={_qos(MQTT_QOS)}")
@@ -166,30 +162,26 @@ def main():
         for line in tail_follow(LOGFILE_PATH):
             m = None
 
-            # 1) TG-Auswahl
+            # TG-Auswahl
             if ENABLE_REFLECTOR and SELECT_RE:
                 m = SELECT_RE.match(line)
                 if m:
                     state["time"] = m.group("time")
                     tg = m.group("tg")
                     if tg == "0":
-                        # Kanal frei: NUR Zustände zurücksetzen, TG/Call stehen lassen
+                        # Nur Zustände zurücksetzen
                         selected_tg = None
                         state.update({"talker": "0", "tx": "0", "rx": "0"})
-                        # TG und Call bleiben auf dem letzten Wert (z. B. aus Talker stop)
                         publish_status(client, MQTT_TOPIC, state.copy())
                     else:
-                        # Ab jetzt dieser TG folgen; Call bleibt bis zum nächsten Talker-Event wie zuletzt
                         selected_tg = tg
                         state["TG"] = tg
-                        # Kein sofortiger Publish nötig
                     continue
 
-            # 2) Talker-Events nur für die aktuell gewählte TG
+            # Talker
             if ENABLE_REFLECTOR and REFLECTOR_RE:
                 m = REFLECTOR_RE.match(line)
                 if m:
-                    # ignorieren, wenn keine TG gewählt ist oder TG nicht passt
                     if selected_tg is None or m.group("tg") != selected_tg:
                         continue
                     state["time"] = m.group("time")
@@ -199,7 +191,7 @@ def main():
                     publish_status(client, MQTT_TOPIC, state.copy())
                     continue
 
-            # 3) TX-Events nur melden, wenn eine TG ausgewählt ist
+            # TX
             if ENABLE_TX and TX_RE:
                 m = TX_RE.match(line)
                 if m:
@@ -207,11 +199,10 @@ def main():
                         continue
                     state["time"] = m.group("time")
                     state["tx"] = "1" if m.group("on") == "ON" else "0"
-                    state["TG"] = selected_tg
                     publish_status(client, MQTT_TOPIC, state.copy())
                     continue
 
-            # 4) RX-Events nur melden, wenn eine TG ausgewählt ist
+            # RX
             if ENABLE_RX and RX_RE:
                 m = RX_RE.match(line)
                 if m:
@@ -219,7 +210,6 @@ def main():
                         continue
                     state["time"] = m.group("time")
                     state["rx"] = "1" if m.group("open") == "OPEN" else "0"
-                    state["TG"] = selected_tg
                     publish_status(client, MQTT_TOPIC, state.copy())
                     continue
 
