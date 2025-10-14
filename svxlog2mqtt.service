@@ -1,0 +1,28 @@
+[Unit]
+Description=SvxLink log -> MQTT Publisher
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=svxlog2mqtt
+Group=svxlog2mqtt
+WorkingDirectory=/opt/svxlog2mqtt
+# Variante mit venv (empfohlen):
+ExecStart=/opt/svxlog2mqtt/venv/bin/python /opt/svxlog2mqtt/svxlog_to_mqtt.py
+# Falls du KEIN venv nutzt, nimm diese Zeile statt der oberen:
+# ExecStart=/usr/bin/python3 /opt/svxlog2mqtt/svxlog_to_mqtt.py
+
+# Log-Ausgabe direkt ins Journal
+Environment=PYTHONUNBUFFERED=1
+
+# robustes Neustartverhalten
+Restart=on-failure
+RestartSec=5
+
+# etwas härtere Limits, weil Logs manchmal hängen
+TimeoutStartSec=15
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
