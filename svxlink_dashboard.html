@@ -1,66 +1,90 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8" />
-  <title>SvxLink → MQTT Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root { font-family: system-ui, sans-serif; color-scheme: light dark; }
-    body { margin: 0; padding: 16px; }
-    h1 { margin: 0 0 12px; font-size: 20px; }
-    .card { border: 1px solid #8883; border-radius: 12px; padding: 12px; margin-bottom: 12px; box-shadow: 0 1px 4px #0001; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-    label { font-size: 12px; opacity: .8; display: block; }
-    input { padding: 6px 8px; border-radius: 8px; border: 1px solid #8885; min-width: 180px; }
-    button { padding: 8px 12px; border-radius: 10px; border: 0; background: #3b82f6; color: white; cursor: pointer; }
-    button.secondary { background: #6b7280; }
-    .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; display: inline-block; }
-    .ok { background: #16a34a22; color: #16a34a; border: 1px solid #16a34a55; }
-    .err { background: #dc262622; color: #dc2626; border: 1px solid #dc262655; }
-    .warn { background: #d9770622; color: #d97706; border: 1px solid #d9770655; }
-    .kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; margin-top: 8px; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
-    .on { background: #16a34a; } .off { background: #dc2626; } .unk { background: #9ca3af; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { padding: 8px; border-bottom: 1px solid #8882; text-align: left; }
-    tbody tr:hover { background: #8881; }
-    .grow { flex: 1; }
-    .muted { opacity: .7; font-size: 12px; }
-  </style>
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SvxLink → MQTT Dashboard</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  body { margin: 0; padding: 16px; }
+  h1 { margin: 0 0 12px; font-size: 20px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: 1fr; }
+  @media (min-width: 1000px){ .grid { grid-template-columns: 1fr 1fr; } }
+  .card { border: 1px solid #8883; border-radius: 12px; padding: 12px; box-shadow: 0 1px 4px #0001; background: inherit; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  label { font-size: 12px; opacity: .8; }
+  input, select, textarea { padding: 6px 8px; border:1px solid #8885; border-radius:8px; min-width: 140px; }
+  button { padding:8px 12px; border:0; border-radius:10px; background:#3b82f6; color:#fff; cursor:pointer; }
+  button.secondary { background:#6b7280; }
+  .badge { padding: 4px 8px; border-radius:999px; font-size:12px; display:inline-block; border:1px solid transparent; }
+  .ok{ background:#16a34a22; color:#16a34a; border-color:#16a34a55;}
+  .warn{ background:#d9770622; color:#d97706; border-color:#d9770655;}
+  .err{ background:#dc262622; color:#dc2626; border-color:#dc262655;}
+  .kv{ display:grid; grid-template-columns:140px 1fr; gap:6px 12px; }
+  .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:middle; }
+  .on{ background:#16a34a; } .off{ background:#dc2626; } .unk{ background:#9ca3af; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td{ padding:8px; border-bottom:1px solid #8882; text-align:left; }
+  tbody tr:hover{ background:#8881; }
+  .muted{ opacity:.7; font-size:12px; }
+  canvas { width:100%; height:64px; }
+  .pill { padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #8884; }
+  .right { text-align:right; }
+</style>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 </head>
 <body>
-  <h1>SvxLink → MQTT Dashboard</h1>
+<h1>SvxLink → MQTT Dashboard</h1>
 
-  <div class="card">
-    <div class="row">
-      <div>
-        <label>WebSocket-URL (Broker)</label>
-        <input id="wsUrl" placeholder="ws://localhost:9001" />
-      </div>
-      <div>
-        <label>Topic</label>
-        <input id="topic" placeholder="svxlink/talker" />
-      </div>
-      <div>
-        <label>Username (optional)</label>
-        <input id="user" placeholder="" />
-      </div>
-      <div>
-        <label>Password (optional)</label>
-        <input id="pass" placeholder="" type="password" />
-      </div>
-      <div class="row">
-        <button id="btnConnect">Verbinden</button>
-        <button id="btnDisconnect" class="secondary">Trennen</button>
-      </div>
-      <div class="grow" style="text-align:right">
-        <span id="connBadge" class="badge warn">getrennt</span>
-      </div>
+<div class="card">
+  <div class="row">
+    <div>
+      <label>WebSocket-URL</label><br>
+      <input id="wsUrl" placeholder="ws://192.168.1.42:9001">
     </div>
-    <div class="muted">Hinweis: Dein Broker muss WebSockets aktiviert haben, z. B. <code>listener 9001<br>protocol websockets</code></div>
+    <div>
+      <label>Topic</label><br>
+      <input id="topic" placeholder="svxlink/talker">
+    </div>
+    <div>
+      <label>Username</label><br>
+      <input id="user">
+    </div>
+    <div>
+      <label>Password</label><br>
+      <input id="pass" type="password">
+    </div>
+    <div>
+      <label>TG-DB URL</label><br>
+      <input id="tgdbUrl" placeholder="http://<RASPI-IP>/tgdb_proxy.php">
+    </div>
+    <div>
+      <label>Filter TG/Name</label><br>
+      <input id="fltTG" placeholder="z.B. 26298 oder Thüringen">
+    </div>
+    <div>
+      <label>Filter Call</label><br>
+      <input id="fltCall" placeholder="Substring, z.B. DJ1">
+    </div>
+    <div class="row" style="align-items:flex-end">
+      <label><input type="checkbox" id="onlyChanges"> nur Änderungen</label>
+      <label><input type="checkbox" id="beep"> Sound bei Talker/TX/RX</label>
+      <label><input type="checkbox" id="showEvents" checked> letzte Ereignisse anzeigen</label>
+    </div>
+    <div class="row">
+      <button id="btnConnect">Verbinden</button>
+      <button id="btnDisconnect" class="secondary">Trennen</button>
+      <button id="btnClear" class="secondary">Liste leeren</button>
+      <button id="btnExport" class="secondary">CSV Export</button>
+    </div>
+    <div style="margin-left:auto">
+      <span id="connBadge" class="badge warn">getrennt</span>
+    </div>
   </div>
+  <div class="muted">Broker muss WebSockets sprechen, z. B. in mosquitto.conf: <code>listener 9001<br>protocol websockets</code></div>
+</div>
 
+<div class="grid">
   <div class="card">
     <strong>Live-Status</strong>
     <div class="kv">
@@ -71,141 +95,306 @@
       <div>TX</div><div id="vTX"><span class="dot unk"></span> unbekannt</div>
       <div>RX</div><div id="vRX"><span class="dot unk"></span> unbekannt</div>
       <div>Nachrichten</div><div id="vCount">0</div>
+      <div>Rate (60s)</div><div><canvas id="spark"></canvas></div>
     </div>
   </div>
 
   <div class="card">
-    <strong>Letzte Ereignisse</strong>
-    <table>
-      <thead>
-        <tr>
-          <th>Zeit</th><th>TG</th><th>Call</th><th>talker</th><th>tx</th><th>rx</th><th>Raw</th>
-        </tr>
-      </thead>
-      <tbody id="rows"></tbody>
-    </table>
+    <strong>Top-Gruppen & -Rufzeichen</strong>
+    <div class="row">
+      <span class="pill">Top TG</span>
+      <span class="pill">Top Calls</span>
+    </div>
+    <div class="row" style="gap:24px; margin-top:8px;">
+      <table style="flex:1">
+        <thead><tr><th>TG — Name</th><th class="right">Count</th></tr></thead>
+        <tbody id="topTG"></tbody>
+      </table>
+      <table style="flex:1">
+        <thead><tr><th>Call</th><th class="right">Count</th></tr></thead>
+        <tbody id="topCall"></tbody>
+      </table>
+    </div>
   </div>
+</div>
+
+<div class="card" id="eventsCard">
+  <strong>Letzte Ereignisse</strong>
+  <table>
+    <thead>
+      <tr>
+        <th>Zeit</th><th>TG</th><th>TG-Name</th><th>Call</th><th>talker</th><th>tx</th><th>rx</th><th>Raw</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
 
 <script>
 (function(){
+  // Elements
+  const E = id => document.getElementById(id);
   const els = {
-    wsUrl: document.getElementById('wsUrl'),
-    topic: document.getElementById('topic'),
-    user: document.getElementById('user'),
-    pass: document.getElementById('pass'),
-    btnConnect: document.getElementById('btnConnect'),
-    btnDisconnect: document.getElementById('btnDisconnect'),
-    connBadge: document.getElementById('connBadge'),
-    vTime: document.getElementById('vTime'),
-    vTG: document.getElementById('vTG'),
-    vCall: document.getElementById('vCall'),
-    vTalker: document.getElementById('vTalker'),
-    vTX: document.getElementById('vTX'),
-    vRX: document.getElementById('vRX'),
-    vCount: document.getElementById('vCount'),
-    rows: document.getElementById('rows'),
+    wsUrl:E('wsUrl'), topic:E('topic'), user:E('user'), pass:E('pass'),
+    tgdbUrl:E('tgdbUrl'),
+    fltTG:E('fltTG'), fltCall:E('fltCall'), onlyChanges:E('onlyChanges'), beep:E('beep'), showEvents:E('showEvents'),
+    btnConnect:E('btnConnect'), btnDisconnect:E('btnDisconnect'), btnClear:E('btnClear'), btnExport:E('btnExport'),
+    connBadge:E('connBadge'),
+    vTime:E('vTime'), vTG:E('vTG'), vCall:E('vCall'), vTalker:E('vTalker'), vTX:E('vTX'), vRX:E('vRX'), vCount:E('vCount'),
+    rows:E('rows'), topTG:E('topTG'), topCall:E('topCall'),
+    spark:E('spark')
   };
 
-  // Defaults merken
-  els.wsUrl.value = localStorage.getItem('svx.ws') || 'ws://localhost:9001';
-  els.topic.value = localStorage.getItem('svx.topic') || 'svxlink/talker';
-  els.user.value  = localStorage.getItem('svx.user') || '';
-  els.pass.value  = localStorage.getItem('svx.pass') || '';
+  // Defaults
+  els.wsUrl.value   = localStorage.getItem('svx.ws')    || 'ws://192.168.1.42:9001';
+  els.topic.value   = localStorage.getItem('svx.topic') || 'svxlink/talker';
+  els.user.value    = localStorage.getItem('svx.user')  || '';
+  els.pass.value    = localStorage.getItem('svx.pass')  || '';
+  els.tgdbUrl.value = localStorage.getItem('svx.tgdb')  || 'http://127.0.0.1/tgdb_proxy.php';
+  els.fltTG.value   = localStorage.getItem('svx.fltTG') || '';
+  els.fltCall.value = localStorage.getItem('svx.fltCall') || '';
+  els.onlyChanges.checked = (localStorage.getItem('svx.onlyChanges') === '1');
+  els.beep.checked       = (localStorage.getItem('svx.beep') === '1');
+  els.showEvents.checked = (localStorage.getItem('svx.showEvents') !== '0');
 
-  let client = null;
-  let msgCount = 0;
+  // Initial Sichtbarkeit der Ereigniskarte
+  const eventsCard = document.getElementById('eventsCard');
+  if (eventsCard) eventsCard.style.display = els.showEvents.checked ? '' : 'none';
+
+  let client = null, msgCount = 0;
+  const history = []; // raw events for export
+  const countsTG = new Map();
+  const countsCall = new Map();
+  const rate = Array(60).fill(0); // messages per second last 60s
+  let lastState = { talker:null, tx:null, rx:null }; // for "only changes"
+  const TG_NAMES = new Map();
+
+  // Tiny beep
+  let audioCtx = null;
+  function ping() {
+    if (!els.beep.checked) return;
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'square'; o.frequency.value = 880;
+      g.gain.value = 0.04; o.connect(g); g.connect(audioCtx.destination);
+      o.start(); setTimeout(()=>{ o.stop(); }, 100);
+    } catch(e) {}
+  }
 
   function setConn(state, text) {
     els.connBadge.textContent = text || state;
-    els.connBadge.className = 'badge ' + (state === 'verbunden' ? 'ok' : state === 'fehler' ? 'err' : 'warn');
+    els.connBadge.className = 'badge ' + (state==='verbunden'?'ok':state==='fehler'?'err':'warn');
   }
 
-  function dot(label, val) {
+  function dot(val) {
     const cls = val === "1" ? 'on' : val === "0" ? 'off' : 'unk';
     const txt = val === "1" ? 'ein' : val === "0" ? 'aus' : 'unbekannt';
     return `<span class="dot ${cls}"></span>${txt}`;
   }
 
-  function onMessage(topic, payload) {
-    try {
-      const data = JSON.parse(payload.toString());
-      msgCount++;
-      els.vCount.textContent = msgCount.toString();
-      els.vTime.textContent = data.time ?? '—';
-      els.vTG.textContent = data.TG ?? '—';
-      els.vCall.textContent = data.Call ?? '—';
-      els.vTalker.innerHTML = dot('talker', data.talker);
-      els.vTX.innerHTML = dot('tx', data.tx);
-      els.vRX.innerHTML = dot('rx', data.rx);
+  function drawSpark() {
+    const c = els.spark, ctx = c.getContext('2d');
+    const w = c.width = c.clientWidth, h = c.height = c.clientHeight;
+    ctx.clearRect(0,0,w,h);
+    const max = Math.max(1, ...rate);
+    ctx.beginPath();
+    for (let i=0;i<rate.length;i++){
+      const x = i/(rate.length-1)*w;
+      const y = h - (rate[i]/max)*h;
+      i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  setInterval(()=>{
+    rate.shift(); rate.push(0); drawSpark();
+  }, 1000);
 
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${data.time ?? ''}</td>
-        <td>${data.TG ?? ''}</td>
-        <td>${data.Call ?? ''}</td>
-        <td>${data.talker ?? ''}</td>
-        <td>${data.tx ?? ''}</td>
-        <td>${data.rx ?? ''}</td>
-        <td><code>${payload.toString().replace(/</g,'&lt;')}</code></td>`;
-      els.rows.insertBefore(tr, els.rows.firstChild);
-      // max 200 Zeilen
-      while (els.rows.children.length > 200) els.rows.removeChild(els.rows.lastChild);
-    } catch(e) {
-      console.error('Parse-Fehler', e);
+  function updateTopTables(map, tbody, maxRows=10) {
+    const arr = [...map.entries()].sort((a,b)=>b[1]-a[1]).slice(0,maxRows);
+    tbody.innerHTML = arr.map(([k,v])=>`<tr><td>${k}</td><td class="right">${v}</td></tr>`).join('');
+  }
+
+  function tgName(tg) {
+    if (!tg) return '—';
+    return TG_NAMES.get(String(tg)) || 'unbekannt';
+  }
+
+  async function loadTGDB() {
+    const url = els.tgdbUrl.value.trim();
+    TG_NAMES.clear();
+    if (!url) return;
+    try {
+      const resp = await fetch(url, { cache: 'no-store' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const txt = await resp.text();
+      // Beispielzeile: '26298' => 'TG26298 Thüringen'
+      const regex = /'(\d+)'(?:\s*=>\s*'([^']*)')/g;
+      let m;
+      while ((m = regex.exec(txt)) !== null) {
+        const tg = String(m[1]);
+        let name = String(m[2] || '').trim();
+        name = name.replace(/^TG\s*\d+\s*/i, '').trim(); // "TG26298 Thüringen" -> "Thüringen"
+        if (!name) name = 'unbekannt';
+        TG_NAMES.set(tg, name);
+      }
+      console.log(`[TGDB] geladen: ${TG_NAMES.size} Einträge von ${url}`);
+    } catch (e) {
+      console.warn('[TGDB] Laden/Parsen fehlgeschlagen:', e);
     }
   }
 
+  function applyFilters(d) {
+    const ftg = els.fltTG.value.trim().toUpperCase();
+    const fcall = els.fltCall.value.trim().toUpperCase();
+    if (ftg) {
+      const tgStr = String(d.TG||'').toUpperCase();
+      const nameStr = tgName(d.TG).toUpperCase();
+      const okNum = tgStr === ftg;
+      const okName = nameStr.includes(ftg);
+      if (!okNum && !okName) return false;
+    }
+    if (fcall && String(d.Call||'').toUpperCase().indexOf(fcall) === -1) return false;
+    if (els.onlyChanges.checked) {
+      const changed = (lastState.talker!==d.talker) || (lastState.tx!==d.tx) || (lastState.rx!==d.rx);
+      lastState = { talker:d.talker, tx:d.tx, rx:d.rx };
+      if (!changed) return false;
+    } else {
+      lastState = { talker:d.talker, tx:d.tx, rx:d.rx };
+    }
+    return true;
+  }
+
+  function onMessage(topic, payload) {
+    rate[rate.length-1]++; // one more this second
+    const txt = payload.toString();
+    let data;
+    try { data = JSON.parse(txt); } catch(e){ return; }
+
+    // Update live
+    msgCount++; els.vCount.textContent = String(msgCount);
+    els.vTime.textContent = data.time ?? '—';
+    els.vTG.textContent   = (data.TG ?? '—') + ' · ' + tgName(data.TG);
+    els.vCall.textContent = data.Call ?? '—';
+    els.vTalker.innerHTML = dot(data.talker);
+    els.vTX.innerHTML     = dot(data.tx);
+    els.vRX.innerHTML     = dot(data.rx);
+
+    // Beep on interesting transitions
+    if (data.talker === "1" || data.tx === "1" || data.rx === "1") ping();
+
+    // Aggregates
+    if (data.TG) {
+      const label = `${data.TG} — ${tgName(data.TG)}`;
+      countsTG.set(label, (countsTG.get(label)||0)+1);
+    }
+    if (data.Call) countsCall.set(data.Call, (countsCall.get(data.Call)||0)+1);
+    updateTopTables(countsTG, els.topTG);
+    updateTopTables(countsCall, els.topCall);
+
+    // History für Export
+    history.unshift({ time:data.time||'', TG:data.TG||'', TGName:tgName(data.TG)||'', Call:data.Call||'', talker:data.talker||'', tx:data.tx||'', rx:data.rx||'', raw:txt });
+    if (history.length > 1000) history.pop();
+
+    // Tabelle nur, wenn aktiviert und Filter passt
+    if (!els.showEvents.checked) return;
+    if (!applyFilters(data)) return;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${data.time ?? ''}</td>
+      <td>${data.TG ?? ''}</td>
+      <td>${tgName(data.TG)}</td>
+      <td>${data.Call ?? ''}</td>
+      <td>${data.talker ?? ''}</td>
+      <td>${data.tx ?? ''}</td>
+      <td>${data.rx ?? ''}</td>
+      <td><code>${txt.replace(/</g,'&lt;')}</code></td>`;
+    els.rows.insertBefore(tr, els.rows.firstChild);
+    while (els.rows.children.length > 300) els.rows.removeChild(els.rows.lastChild);
+  }
+
   function connect() {
+    // persist settings
+    localStorage.setItem('svx.ws', els.wsUrl.value.trim());
+    localStorage.setItem('svx.topic', els.topic.value.trim());
+    localStorage.setItem('svx.user', els.user.value.trim());
+    localStorage.setItem('svx.pass', els.pass.value);
+    localStorage.setItem('svx.tgdb', els.tgdbUrl.value.trim());
+    localStorage.setItem('svx.fltTG', els.fltTG.value.trim());
+    localStorage.setItem('svx.fltCall', els.fltCall.value.trim());
+    localStorage.setItem('svx.onlyChanges', els.onlyChanges.checked ? '1':'0');
+    localStorage.setItem('svx.beep', els.beep.checked ? '1':'0');
+    localStorage.setItem('svx.showEvents', els.showEvents.checked ? '1':'0');
+
     const url = els.wsUrl.value.trim();
     const topic = els.topic.value.trim();
-    const user = els.user.value.trim();
-    const pass = els.pass.value;
+    const opts = { clean:true, reconnectPeriod:2000, connectTimeout:5000 };
+    const u = els.user.value.trim(), p = els.pass.value;
+    if (u) opts.username = u; if (p) opts.password = p;
 
-    if (client) try { client.end(true); } catch(e) {}
-    setConn('verbinden', 'verbinden…');
+    if (client) try{ client.end(true); } catch(e){}
 
-    // Settings speichern
-    localStorage.setItem('svx.ws', url);
-    localStorage.setItem('svx.topic', topic);
-    localStorage.setItem('svx.user', user);
-    localStorage.setItem('svx.pass', pass);
-
-    const opts = {
-      clean: true,
-      reconnectPeriod: 2000,
-      connectTimeout: 5000,
-    };
-    if (user) opts.username = user;
-    if (pass) opts.password = pass;
-
+    setConn('verbinden','verbinden…');
     client = mqtt.connect(url, opts);
 
     client.on('connect', () => {
-      setConn('verbunden', 'verbunden');
-      try {
-        client.subscribe(topic, { qos: 0 }, (err) => {
-          if (err) setConn('fehler', 'subscribe fehlgeschlagen');
-        });
-      } catch(e) { setConn('fehler', 'subscribe exception'); }
+      setConn('verbunden','verbunden');
+      client.subscribe(topic, { qos:0 }, err => {
+        if (err) setConn('fehler','subscribe fehlgeschlagen');
+      });
     });
+    client.on('reconnect', () => setConn('verbinden','reconnect…'));
+    client.on('close', () => setConn('getrennt','getrennt'));
+    client.on('error', () => setConn('fehler','verbindungsfehler'));
+    client.on('message', onMessage);
 
-    client.on('reconnect', () => setConn('verbinden', 'reconnect…'));
-    client.on('close', () => setConn('getrennt', 'getrennt'));
-    client.on('error', () => setConn('fehler', 'verbindungsfehler'));
-    client.on('message', (t, p) => onMessage(t, p));
+    // TG-DB laden
+    loadTGDB();
   }
 
   function disconnect() {
     if (!client) return;
-    try { client.end(true, {}, () => setConn('getrennt', 'getrennt')); }
-    catch(e) { setConn('getrennt', 'getrennt'); }
+    try { client.end(true, {}, () => setConn('getrennt','getrennt')); }
+    catch(e){ setConn('getrennt','getrennt'); }
   }
 
+  function clearList() { document.getElementById('rows').innerHTML = ''; }
+
+  function exportCSV() {
+    if (history.length===0) return;
+    const head = ['time','TG','TGName','Call','talker','tx','rx'];
+    const lines = [head.join(',')];
+    for (const r of [...history].reverse()){
+      const row = head.map(k => (String(r[k]??'').replace(/"/g,'""')));
+      lines.push(row.map(x=>`"${x}"`).join(','));
+    }
+    const blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `svxlink_events_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+    a.click(); URL.revokeObjectURL(a.href);
+  }
+
+  // UI Events
   els.btnConnect.addEventListener('click', connect);
   els.btnDisconnect.addEventListener('click', disconnect);
+  els.btnClear.addEventListener('click', clearList);
+  els.btnExport.addEventListener('click', exportCSV);
+  els.fltTG.addEventListener('change', ()=>{ localStorage.setItem('svx.fltTG', els.fltTG.value.trim()); });
+  els.fltCall.addEventListener('change', ()=>{ localStorage.setItem('svx.fltCall', els.fltCall.value.trim()); });
+  els.onlyChanges.addEventListener('change', ()=>{ localStorage.setItem('svx.onlyChanges', els.onlyChanges.checked?'1':'0'); });
+  els.beep.addEventListener('change', ()=>{ localStorage.setItem('svx.beep', els.beep.checked?'1':'0'); });
+  els.showEvents.addEventListener('change', ()=>{
+    localStorage.setItem('svx.showEvents', els.showEvents.checked ? '1' : '0');
+    const card = document.getElementById('eventsCard');
+    if (card) card.style.display = els.showEvents.checked ? '' : 'none';
+  });
 
-  // Auto-Connect beim Laden
-  setTimeout(connect, 100);
+  // Autostart
+  setTimeout(connect, 200);
+  // TG-DB regelmäßig aktualisieren
+  setInterval(loadTGDB, 5 * 60 * 1000);
 })();
 </script>
 </body>
