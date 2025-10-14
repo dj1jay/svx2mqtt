@@ -52,10 +52,10 @@ SELECT_RE = re.compile(
     re.IGNORECASE
 ) if ENABLE_REFLECTOR else None
 
-# Talker start/stop
+# Talker start/stop (Call darf / enthalten)
 REFLECTOR_RE = re.compile(
     DT_RE + re.escape(REFLECTOR_TAG) +
-    r": Talker (?P<state>start|stop) on TG #(?P<tg>\d+): (?P<call>[A-Za-z0-9\/\-]+)\s*$",
+    r": Talker (?P<state>start|stop) on TG #(?P<tg>\d+): (?P<call>[A-Za-z0-9/\-]+)\s*$",
     re.IGNORECASE
 ) if ENABLE_REFLECTOR else None
 
@@ -169,10 +169,13 @@ def main():
                     state["time"] = m.group("time")
                     tg = m.group("tg")
                     if tg == "0":
-                        # Nur Zustände zurücksetzen
+                        # Kanal frei: talker/rx aus, TG/Call bleiben stehen
                         selected_tg = None
-                        state.update({"talker": "0", "tx": "0", "rx": "0"})
-                        publish_status(client, MQTT_TOPIC, state.copy())
+                        prev_tx = state["tx"]
+                        state.update({"talker": "0", "rx": "0"})
+                        # Nur publizieren, wenn nicht gerade TX aktiv ist
+                        if prev_tx != "1":
+                            publish_status(client, MQTT_TOPIC, state.copy())
                     else:
                         selected_tg = tg
                         state["TG"] = tg
@@ -185,20 +188,24 @@ def main():
                     if selected_tg is None or m.group("tg") != selected_tg:
                         continue
                     state["time"] = m.group("time")
-                    state["talker"] = "1" if m.group("state") == "start" else "0"
+                    state["talker"] = "1" if m.group("state").lower() == "start" else "0"
                     state["TG"] = selected_tg
                     state["Call"] = m.group("call")
                     publish_status(client, MQTT_TOPIC, state.copy())
                     continue
 
-            # TX
+            # TX: nur OFF setzt tx auf 0, ON setzt auf 1. Alles andere fasst TX nicht an.
             if ENABLE_TX and TX_RE:
                 m = TX_RE.match(line)
                 if m:
                     if selected_tg is None:
+                        # Wenn keine TG gewählt ist, ignorieren wir TX-Änderungen
                         continue
                     state["time"] = m.group("time")
-                    state["tx"] = "1" if m.group("on") == "ON" else "0"
+                    if m.group("on") == "ON":
+                        state["tx"] = "1"
+                    else:
+                        state["tx"] = "0"
                     publish_status(client, MQTT_TOPIC, state.copy())
                     continue
 
