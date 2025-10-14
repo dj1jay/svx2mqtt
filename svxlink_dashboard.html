@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>SvxLink → MQTT Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { font-family: system-ui, sans-serif; color-scheme: light dark; }
+    body { margin: 0; padding: 16px; }
+    h1 { margin: 0 0 12px; font-size: 20px; }
+    .card { border: 1px solid #8883; border-radius: 12px; padding: 12px; margin-bottom: 12px; box-shadow: 0 1px 4px #0001; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    label { font-size: 12px; opacity: .8; display: block; }
+    input { padding: 6px 8px; border-radius: 8px; border: 1px solid #8885; min-width: 180px; }
+    button { padding: 8px 12px; border-radius: 10px; border: 0; background: #3b82f6; color: white; cursor: pointer; }
+    button.secondary { background: #6b7280; }
+    .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; display: inline-block; }
+    .ok { background: #16a34a22; color: #16a34a; border: 1px solid #16a34a55; }
+    .err { background: #dc262622; color: #dc2626; border: 1px solid #dc262655; }
+    .warn { background: #d9770622; color: #d97706; border: 1px solid #d9770655; }
+    .kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; margin-top: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+    .on { background: #16a34a; } .off { background: #dc2626; } .unk { background: #9ca3af; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 8px; border-bottom: 1px solid #8882; text-align: left; }
+    tbody tr:hover { background: #8881; }
+    .grow { flex: 1; }
+    .muted { opacity: .7; font-size: 12px; }
+  </style>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+</head>
+<body>
+  <h1>SvxLink → MQTT Dashboard</h1>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>WebSocket-URL (Broker)</label>
+        <input id="wsUrl" placeholder="ws://localhost:9001" />
+      </div>
+      <div>
+        <label>Topic</label>
+        <input id="topic" placeholder="svxlink/talker" />
+      </div>
+      <div>
+        <label>Username (optional)</label>
+        <input id="user" placeholder="" />
+      </div>
+      <div>
+        <label>Password (optional)</label>
+        <input id="pass" placeholder="" type="password" />
+      </div>
+      <div class="row">
+        <button id="btnConnect">Verbinden</button>
+        <button id="btnDisconnect" class="secondary">Trennen</button>
+      </div>
+      <div class="grow" style="text-align:right">
+        <span id="connBadge" class="badge warn">getrennt</span>
+      </div>
+    </div>
+    <div class="muted">Hinweis: Dein Broker muss WebSockets aktiviert haben, z. B. <code>listener 9001<br>protocol websockets</code></div>
+  </div>
+
+  <div class="card">
+    <strong>Live-Status</strong>
+    <div class="kv">
+      <div>Letzte Zeit</div><div id="vTime">—</div>
+      <div>Talkgroup</div><div id="vTG">—</div>
+      <div>Rufzeichen</div><div id="vCall">—</div>
+      <div>Talker</div><div id="vTalker"><span class="dot unk"></span> unbekannt</div>
+      <div>TX</div><div id="vTX"><span class="dot unk"></span> unbekannt</div>
+      <div>RX</div><div id="vRX"><span class="dot unk"></span> unbekannt</div>
+      <div>Nachrichten</div><div id="vCount">0</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>Letzte Ereignisse</strong>
+    <table>
+      <thead>
+        <tr>
+          <th>Zeit</th><th>TG</th><th>Call</th><th>talker</th><th>tx</th><th>rx</th><th>Raw</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+<script>
+(function(){
+  const els = {
+    wsUrl: document.getElementById('wsUrl'),
+    topic: document.getElementById('topic'),
+    user: document.getElementById('user'),
+    pass: document.getElementById('pass'),
+    btnConnect: document.getElementById('btnConnect'),
+    btnDisconnect: document.getElementById('btnDisconnect'),
+    connBadge: document.getElementById('connBadge'),
+    vTime: document.getElementById('vTime'),
+    vTG: document.getElementById('vTG'),
+    vCall: document.getElementById('vCall'),
+    vTalker: document.getElementById('vTalker'),
+    vTX: document.getElementById('vTX'),
+    vRX: document.getElementById('vRX'),
+    vCount: document.getElementById('vCount'),
+    rows: document.getElementById('rows'),
+  };
+
+  // Defaults merken
+  els.wsUrl.value = localStorage.getItem('svx.ws') || 'ws://localhost:9001';
+  els.topic.value = localStorage.getItem('svx.topic') || 'svxlink/talker';
+  els.user.value  = localStorage.getItem('svx.user') || '';
+  els.pass.value  = localStorage.getItem('svx.pass') || '';
+
+  let client = null;
+  let msgCount = 0;
+
+  function setConn(state, text) {
+    els.connBadge.textContent = text || state;
+    els.connBadge.className = 'badge ' + (state === 'verbunden' ? 'ok' : state === 'fehler' ? 'err' : 'warn');
+  }
+
+  function dot(label, val) {
+    const cls = val === "1" ? 'on' : val === "0" ? 'off' : 'unk';
+    const txt = val === "1" ? 'ein' : val === "0" ? 'aus' : 'unbekannt';
+    return `<span class="dot ${cls}"></span>${txt}`;
+  }
+
+  function onMessage(topic, payload) {
+    try {
+      const data = JSON.parse(payload.toString());
+      msgCount++;
+      els.vCount.textContent = msgCount.toString();
+      els.vTime.textContent = data.time ?? '—';
+      els.vTG.textContent = data.TG ?? '—';
+      els.vCall.textContent = data.Call ?? '—';
+      els.vTalker.innerHTML = dot('talker', data.talker);
+      els.vTX.innerHTML = dot('tx', data.tx);
+      els.vRX.innerHTML = dot('rx', data.rx);
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${data.time ?? ''}</td>
+        <td>${data.TG ?? ''}</td>
+        <td>${data.Call ?? ''}</td>
+        <td>${data.talker ?? ''}</td>
+        <td>${data.tx ?? ''}</td>
+        <td>${data.rx ?? ''}</td>
+        <td><code>${payload.toString().replace(/</g,'&lt;')}</code></td>`;
+      els.rows.insertBefore(tr, els.rows.firstChild);
+      // max 200 Zeilen
+      while (els.rows.children.length > 200) els.rows.removeChild(els.rows.lastChild);
+    } catch(e) {
+      console.error('Parse-Fehler', e);
+    }
+  }
+
+  function connect() {
+    const url = els.wsUrl.value.trim();
+    const topic = els.topic.value.trim();
+    const user = els.user.value.trim();
+    const pass = els.pass.value;
+
+    if (client) try { client.end(true); } catch(e) {}
+    setConn('verbinden', 'verbinden…');
+
+    // Settings speichern
+    localStorage.setItem('svx.ws', url);
+    localStorage.setItem('svx.topic', topic);
+    localStorage.setItem('svx.user', user);
+    localStorage.setItem('svx.pass', pass);
+
+    const opts = {
+      clean: true,
+      reconnectPeriod: 2000,
+      connectTimeout: 5000,
+    };
+    if (user) opts.username = user;
+    if (pass) opts.password = pass;
+
+    client = mqtt.connect(url, opts);
+
+    client.on('connect', () => {
+      setConn('verbunden', 'verbunden');
+      try {
+        client.subscribe(topic, { qos: 0 }, (err) => {
+          if (err) setConn('fehler', 'subscribe fehlgeschlagen');
+        });
+      } catch(e) { setConn('fehler', 'subscribe exception'); }
+    });
+
+    client.on('reconnect', () => setConn('verbinden', 'reconnect…'));
+    client.on('close', () => setConn('getrennt', 'getrennt'));
+    client.on('error', () => setConn('fehler', 'verbindungsfehler'));
+    client.on('message', (t, p) => onMessage(t, p));
+  }
+
+  function disconnect() {
+    if (!client) return;
+    try { client.end(true, {}, () => setConn('getrennt', 'getrennt')); }
+    catch(e) { setConn('getrennt', 'getrennt'); }
+  }
+
+  els.btnConnect.addEventListener('click', connect);
+  els.btnDisconnect.addEventListener('click', disconnect);
+
+  // Auto-Connect beim Laden
+  setTimeout(connect, 100);
+})();
+</script>
+</body>
+</html>
