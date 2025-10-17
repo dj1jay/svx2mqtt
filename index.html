@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>FM‑Funknetz.de – Live</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial; background:#0b0c10; color:#e5e7eb; }
+    header { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:14px 16px; background:#111827; position:sticky; top:0; z-index:5; }
+    h1 { margin:0; font-size:25px; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .pill { padding:4px 10px; border-radius:999px; background:#1f2937; font-size:12px; border:1px solid #374151; }
+    .ok { color:#10b981; }
+    .warn { color:#f59e0b; }
+    .bad { color:#ef4444; }
+    main { padding:16px; max-width:1200px; margin:0 auto; }
+    .grid { display:grid; gap:12px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card { background:#111827; border:1px solid #374151; border-radius:12px; overflow:hidden; }
+    .card h2 { margin:0; font-size:15px; padding:10px 12px; border-bottom:1px solid #374151; }
+    .card .body { padding:12px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:8px; border-bottom:1px solid #1f2937; text-align:left; }
+    th { font-weight:600; font-size:13px; }
+    td { font-size:13px; }
+    .small { font-size:12px; color:#9ca3af; }
+    .tag { font-size:12px; background:#1f2937; border:1px solid #374151; padding:2px 6px; border-radius:999px; }
+    .call { font-weight:700; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    button { background:#1f2937; border:1px solid #374151; color:#e5e7eb; padding:6px 10px; border-radius:8px; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    #error { white-space:pre-wrap; color:#ef4444; font-size:12px; margin-top:8px; }
+  </style>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>FM‑Funknetz.de – Live</h1>
+ <small><center>MQTT Live Dashboard <br>(Teststatus)</center></small>
+  <div class="row">
+    <span id="conn" class="pill">Getrennt</span>
+    <span id="clients" class="pill">Verbundene Clients: —</span>
+<!--    <span class="pill">Broker: <b class="small">wss://status.thueringen.link/mqtt</b></span> 
+    <span class="pill">Topic: <b class="small">/server/statethr/1</b></span> -->
+    <button id="btnConnect">Verbinden</button>
+    <button id="btnDisconnect" disabled>Trennen</button>
+  </div>
+</header>
+<main>
+  <div class="grid">
+    <section class="card">
+      <h2><center>Live</center></h2>
+      <div class="body">
+        <div id="activeEmpty" class="small">Funkstille .... Niemand spricht... aber wirklich niemand.</div>
+        <table id="activeTable" style="display:none">
+          <thead>
+            <tr>
+              <th style="width:20%">Call</th>
+              <th style="width:12%">TG</th>
+              <th style="width:40%">Sprechgruppe</th>
+              <th style="width:12%">Zeit</th>
+              <th style="width:13%">Dauer</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="error" class="small"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><center>Zuletzt Aktiv</center></h2>
+      <div class="body" style="max-height:70vh; overflow:auto;">
+        <table id="lhTable">
+          <thead>
+            <tr>
+              <th style="width:20%">Call</th>
+              <th style="width:12%">TG</th>
+              <th style="width:40%">Sprechgruppe</th>
+              <th style="width:12%">Zeit</th>
+              <th style="width:13%">Dauer</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+</main>
+<script>
+  const WS_URL = "wss://status.thueringen.link/mqtt";
+  const TOPIC  = "/server/statethr/1"; // {"time":"18:09:43","talk":"start|stop","call":"DK0GH-HS","tg":"37574"}
+  const TGDB_URL = "https://master1.fm-funknetz.de/dashtt/tgdb_proxy.php"; // CORS-ok plaintext
+  const CLIENTS_TOPIC = "/server/state/logins"; // Zahl erwartet
+
+  const elConn = document.getElementById("conn");
+  const elBtnC = document.getElementById("btnConnect");
+  const elBtnD = document.getElementById("btnDisconnect");
+  const elClients = document.getElementById("clients");
+  const elErr  = document.getElementById("error");
+  const elActiveEmpty = document.getElementById("activeEmpty");
+  const elActiveTable = document.getElementById("activeTable");
+  const elActiveBody  = elActiveTable.querySelector("tbody");
+  const elLHBody      = document.getElementById("lhTable").querySelector("tbody");
+
+  let client = null;
+  const active = new Map();   // call -> { call, tg, startMs }
+  const lastHeard = [];       // { call, tg, endMs, durationSec }
+  const tgMap = new Map();    // id -> name
+
+  function setState(txt, cls) {
+    elConn.textContent = txt;
+    elConn.className = "pill " + (cls || "");
+    elBtnC.disabled = (txt !== "Getrennt" && txt !== "Fehler");
+    elBtnD.disabled = (txt !== "Verbunden");
+  }
+
+  // Load TG DB (supports php-array style and line formats)
+  async function loadTGDB() {
+    try {
+      const resp = await fetch(TGDB_URL, { cache: "no-store" });
+      const text = await resp.text();
+      parseTGDB(text);
+      render();
+    } catch (e) {
+      console.warn("TGDB fetch failed:", e);
+    }
+  }
+
+  function parseTGDB(text) {
+    tgMap.clear();
+    // PHP array style: '123' => 'TG123 Foo Bar', ...
+    const phpRe = /'(\d+)'\s*=>\s*'([^']*)'/g;
+    let m, found = false;
+    while ((m = phpRe.exec(text)) !== null) {
+      found = true;
+      const id = m[1].trim();
+      const raw = m[2].trim();
+      tgMap.set(id, normalizeName(id, raw));
+    }
+    if (found) return;
+
+    // Fallback: line lists
+    const lines = text.split(/\r?\n/);
+    for (let line of lines) {
+      line = line.trim();
+      if (!line || line.startsWith("//") || line.startsWith("#") || line.startsWith(";")) continue;
+      let parts = line.split(/\s*[,;\t]\s*/);
+      if (parts.length === 1) {
+        const mm = line.match(/^(\d+)\s+(.+)$/);
+        if (mm) parts = [mm[1], mm[2]];
+      }
+      if (parts.length >= 2) {
+        const id = parts[0].trim();
+        const raw = parts.slice(1).join(" ").trim();
+        if (/^\d+$/.test(id) && raw) {
+          tgMap.set(id, normalizeName(id, raw));
+        }
+      }
+    }
+  }
+
+  function normalizeName(id, raw) {
+    const esc = id.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+    const reA = new RegExp("^TG\s*" + esc + "\s*", "i");
+    let name = raw.replace(reA, "").trim();
+    const reB = new RegExp("^TG\s*0*" + esc + "\b\s*-?\s*", "i");
+    name = name.replace(reB, "").trim();
+    if (!name) name = raw;
+    return name;
+  }
+
+  function tgName(id) {
+    const s = String(id || "");
+    return tgMap.get(s) || "";
+  }
+
+  function connect() {
+    if (client) try { client.end(true); } catch(e) {}
+    elErr.textContent = "";
+    setState("Verbinden…", "warn");
+    client = mqtt.connect(WS_URL, {
+      reconnectPeriod: 3000,
+      keepalive: 30,
+      clean: true,
+      clientId: "fm-talkers-" + Math.random().toString(16).slice(2,10),
+    });
+
+    client.on("connect", () => {
+      setState("Verbunden", "ok");
+      client.subscribe([TOPIC, CLIENTS_TOPIC], { qos: 0 }, (err) => {
+        if (err) elErr.textContent = "Subscribe-Fehler: " + (err.message || String(err));
+      });
+    });
+    client.on("reconnect", () => setState("Verbinden…", "warn"));
+    client.on("close", () => setState("Getrennt"));
+    client.on("error", (err) => {
+      setState("Fehler", "bad");
+      elErr.textContent = (err && err.message) ? err.message : String(err || "Unbekannter Fehler");
+    });
+
+    client.on("message", (topic, payload) => {
+      try {
+        if (topic === CLIENTS_TOPIC) {
+          const t = (typeof payload === "string") ? payload : new TextDecoder().decode(payload);
+          const n = Number.parseInt(String(t).trim(), 10);
+          if (!Number.isNaN(n)) elClients.textContent = "Verbundene Clients: " + n;
+          return;
+        }
+        const text = (typeof payload === "string") ? payload : new TextDecoder().decode(payload);
+        const msg = parseMsg(text);
+        if (!msg) return;
+
+        const now = Date.now();
+        const id = String(msg.call || "").trim();
+        const tg = String(msg.tg || "").trim();
+        const kind = String(msg.talk || "").toLowerCase();
+
+        if (!id) return;
+        if (kind === "start") {
+          if (!active.has(id)) {
+            active.set(id, { call: id, tg, startMs: now });
+          } else {
+            const a = active.get(id);
+            a.tg = tg || a.tg;
+          }
+        } else if (kind === "stop") {
+          if (active.has(id)) {
+            const a = active.get(id);
+            active.delete(id);
+            const durSec = Math.max(0, Math.round((now - a.startMs) / 1000));
+            lastHeard.unshift({ call: a.call, tg: a.tg || tg, endMs: now, durationSec: durSec });
+            while (lastHeard.length > 100) lastHeard.pop();
+          }
+        }
+
+        render();
+      } catch (e) {
+        elErr.textContent = "Parsing-Fehler: " + (e && e.message ? e.message : String(e));
+      }
+    });
+  }
+
+  function disconnect() {
+    try { client && client.end(true); } catch(e) {}
+    client = null;
+    setState("Getrennt");
+  }
+
+  function parseMsg(text) {
+    const clean = text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+    try { return JSON.parse(clean); } catch { return null; }
+  }
+
+  function render() {
+    // Active
+    const arr = Array.from(active.values()).sort((a,b) => a.startMs - b.startMs);
+    elActiveBody.innerHTML = "";
+    if (!arr.length) {
+      elActiveEmpty.style.display = "block";
+      elActiveTable.style.display = "none";
+    } else {
+      elActiveEmpty.style.display = "none";
+      elActiveTable.style.display = "table";
+      const now = Date.now();
+      for (const a of arr) {
+        const durSec = Math.max(0, Math.round((now - a.startMs)/1000));
+        const group = tgName(a.tg);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="call">${escapeHtml(a.call)}</td>
+          <td><span class="tag mono">${escapeHtml(a.tg || "—")}</span></td>
+          <td>${escapeHtml(group || "—")}</td>
+          <td class="mono">${new Date(a.startMs).toLocaleTimeString()}</td>
+          <td class="mono">${durSec}s</td>
+        `;
+        elActiveBody.appendChild(tr);
+      }
+    }
+
+    // LastHeard
+    elLHBody.innerHTML = "";
+    for (const h of lastHeard) {
+      const group = tgName(h.tg);
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="call">${escapeHtml(h.call)}</td>
+        <td><span class="tag mono">${escapeHtml(h.tg || "—")}</span></td>
+        <td>${escapeHtml(group || "—")}</td>
+        <td class="mono">${new Date(h.endMs).toLocaleTimeString()}</td>
+        <td class="mono">${h.durationSec}s</td>
+      `;
+      elLHBody.appendChild(tr);
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  // Update durations every second
+  setInterval(() => { if (client) render(); }, 1000);
+
+  // TGDB refresh every 10 minutes
+  loadTGDB();
+  setInterval(loadTGDB, 10 * 60 * 1000);
+
+  // Wire buttons and autoconnect
+  document.getElementById("btnConnect").addEventListener("click", connect);
+  document.getElementById("btnDisconnect").addEventListener("click", disconnect);
+  connect();
+</script>
+<center><small><br><br>FM-Funknetz.de - MQTT Livedashboard Version 0.0.5 by DJ1JAY</small></center>
+</body>
+</html>
